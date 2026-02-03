@@ -192,20 +192,55 @@ export default function Dashboard() {
       const network = await provider.getNetwork();
       const currentChainId = Number(network.chainId);
       
-      // If not on Sepolia, switch network
+      // If not on Sepolia, switch network using MetaMask's native API
       if (currentChainId !== sepolia.id) {
         try {
           alert('⚠️ You are on the wrong network! Switching to Sepolia testnet...\n\nPlease approve the network switch in MetaMask.');
-          await switchChain({ chainId: sepolia.id });
+          
+          // Use MetaMask's native API to switch networks (more reliable)
+          try {
+            await window.ethereum.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: `0x${sepolia.id.toString(16)}` }], // Convert to hex
+            });
+          } catch (switchError) {
+            // If the chain doesn't exist, add it
+            if (switchError.code === 4902 || switchError.code === -32603) {
+              await window.ethereum.request({
+                method: 'wallet_addEthereumChain',
+                params: [{
+                  chainId: `0x${sepolia.id.toString(16)}`,
+                  chainName: 'Sepolia',
+                  nativeCurrency: {
+                    name: 'ETH',
+                    symbol: 'ETH',
+                    decimals: 18,
+                  },
+                  rpcUrls: ['https://sepolia.infura.io/v3/'],
+                  blockExplorerUrls: ['https://sepolia.etherscan.io'],
+                }],
+              });
+            } else {
+              throw switchError;
+            }
+          }
           
           // Wait for network switch and verify
+          // Give it a moment for the network change to propagate
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
           let attempts = 0;
           let switched = false;
-          while (attempts < 10 && !switched) {
+          while (attempts < 15 && !switched) {
             await new Promise(resolve => setTimeout(resolve, 500));
-            const newNetwork = await provider.getNetwork();
-            if (Number(newNetwork.chainId) === sepolia.id) {
-              switched = true;
+            try {
+              const newNetwork = await provider.getNetwork();
+              if (Number(newNetwork.chainId) === sepolia.id) {
+                switched = true;
+              }
+            } catch (networkError) {
+              // Sometimes getNetwork throws during network switch, that's okay
+              console.log('Network check during switch:', networkError);
             }
             attempts++;
           }
@@ -219,9 +254,54 @@ export default function Dashboard() {
           alert('✅ Switched to Sepolia testnet! Proceeding with token transfer...');
         } catch (switchError) {
           console.error('Network switch error:', switchError);
-          alert('❌ Failed to switch network. Please switch to Sepolia testnet manually in MetaMask and try again.');
-          setUserSending(false);
-          return;
+          
+          // Check if we actually switched successfully despite the error
+          // Sometimes wagmi/ethers throws an error even when the switch succeeds
+          // The error "network changed: 1 => 11155111" actually means SUCCESS!
+          if (switchError.message?.includes('network changed') || switchError.message?.includes('NETWORK_ERROR')) {
+            // Network change detected - verify if we're on the right network now
+            await new Promise(resolve => setTimeout(resolve, 1500)); // Wait for network to settle
+            try {
+              const verifyNetwork = await provider.getNetwork();
+              if (Number(verifyNetwork.chainId) === sepolia.id) {
+                // Success! Network changed correctly despite the error
+                console.log('✅ Network switch succeeded (network changed error was false alarm)');
+                // Continue with transaction
+              } else {
+                alert('❌ Network switch may have failed. Please verify you are on Sepolia testnet in MetaMask.');
+                setUserSending(false);
+                return;
+              }
+            } catch (verifyError) {
+              // Provider might be updating, wait a bit more
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              const finalCheck = await provider.getNetwork();
+              if (Number(finalCheck.chainId) === sepolia.id) {
+                console.log('✅ Network switch succeeded after retry');
+                // Continue with transaction
+              } else {
+                alert('❌ Network switch failed. Please switch to Sepolia testnet manually in MetaMask.');
+                setUserSending(false);
+                return;
+              }
+            }
+          } else if (switchError.code === 4001) {
+            alert('❌ Network switch was rejected. Please switch to Sepolia testnet manually in MetaMask and try again.');
+            setUserSending(false);
+            return;
+          } else {
+            // For other errors, check if we're actually on Sepolia now
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            const checkNetwork = await provider.getNetwork();
+            if (Number(checkNetwork.chainId) === sepolia.id) {
+              // Network switch actually succeeded, continue
+              console.log('✅ Network switch succeeded despite error');
+            } else {
+              alert('❌ Failed to switch network: ' + (switchError.message || 'Unknown error') + '\n\nPlease switch to Sepolia testnet manually in MetaMask.');
+              setUserSending(false);
+              return;
+            }
+          }
         }
       }
 
@@ -466,9 +546,42 @@ export default function Dashboard() {
                     <button
                       onClick={async () => {
                         try {
-                          await switchChain({ chainId: sepolia.id });
+                          // Use MetaMask's native API to switch networks
+                          try {
+                            await window.ethereum.request({
+                              method: 'wallet_switchEthereumChain',
+                              params: [{ chainId: `0x${sepolia.id.toString(16)}` }],
+                            });
+                          } catch (switchError) {
+                            // If the chain doesn't exist, add it
+                            if (switchError.code === 4902 || switchError.code === -32603) {
+                              await window.ethereum.request({
+                                method: 'wallet_addEthereumChain',
+                                params: [{
+                                  chainId: `0x${sepolia.id.toString(16)}`,
+                                  chainName: 'Sepolia',
+                                  nativeCurrency: {
+                                    name: 'ETH',
+                                    symbol: 'ETH',
+                                    decimals: 18,
+                                  },
+                                  rpcUrls: ['https://sepolia.infura.io/v3/'],
+                                  blockExplorerUrls: ['https://sepolia.etherscan.io'],
+                                }],
+                              });
+                            } else {
+                              throw switchError;
+                            }
+                          }
+                          alert('✅ Network switched to Sepolia!');
+                          // Refresh the page to update the UI
+                          window.location.reload();
                         } catch (error) {
-                          alert('Failed to switch network. Please switch manually in MetaMask.');
+                          if (error.code === 4001) {
+                            alert('Network switch was rejected. Please switch manually in MetaMask.');
+                          } else {
+                            alert('Failed to switch network: ' + (error.message || 'Unknown error'));
+                          }
                         }
                       }}
                       className="ml-4 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-lg transition-all"
