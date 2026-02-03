@@ -1,100 +1,91 @@
 import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import { getUserFromRequest } from '@/lib/auth';
-import { TOKEN_ABI } from '@/lib/tokenABI';
+import prisma from '@/lib/prisma';
+
+// Your token ABI (ERC-20 transfer function)
+const tokenABI = [
+  "function transfer(address to, uint256 amount) returns (bool)",
+  "function balanceOf(address account) view returns (uint256)"
+];
 
 export async function POST(request) {
   try {
-    // Check if user is authenticated
     const user = getUserFromRequest(request);
     if (!user) {
-      return NextResponse.json(
-        { error: 'Not authenticated' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
     const { toAddress, amount } = await request.json();
 
-    // Validate inputs
     if (!toAddress || !amount) {
-      return NextResponse.json(
-        { error: 'Recipient address and amount are required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    // Validate Ethereum address
-    if (!ethers.isAddress(toAddress)) {
-      return NextResponse.json(
-        { error: 'Invalid Ethereum address' },
-        { status: 400 }
-      );
-    }
-
-    // Validate amount
-    const numAmount = parseFloat(amount);
-    if (isNaN(numAmount) || numAmount <= 0) {
-      return NextResponse.json(
-        { error: 'Amount must be a positive number' },
-        { status: 400 }
-      );
-    }
-
-    // Setup provider and wallet
+    // Setup ethers
     const provider = new ethers.JsonRpcProvider(process.env.SEPOLIA_RPC_URL);
     const adminWallet = new ethers.Wallet(process.env.ADMIN_PRIVATE_KEY, provider);
-
-    // Connect to token contract
     const tokenContract = new ethers.Contract(
       process.env.CONTRACT_ADDRESS,
-      TOKEN_ABI,
+      tokenABI,
       adminWallet
     );
 
-    // Convert amount to token units (18 decimals)
+    // Convert amount to wei (18 decimals)
     const amountInWei = ethers.parseUnits(amount.toString(), 18);
 
-    // Check balance
-    const balance = await tokenContract.balanceOf(adminWallet.address);
-    if (balance < amountInWei) {
-      return NextResponse.json(
-        { error: 'Insufficient token balance' },
-        { status: 400 }
-      );
-    }
-
-    // Send tokens
+    // Send transaction
     const tx = await tokenContract.transfer(toAddress, amountInWei);
     
-    // Wait for transaction to be mined
+    // Wait for confirmation
     const receipt = await tx.wait();
+
+    // Log transaction to database
+    await prisma.transaction.create({
+      data: {
+        from: adminWallet.address,
+        to: toAddress,
+        amount: amount.toString(),
+        txHash: receipt.hash,
+        status: 'success',
+        type: 'admin',
+        userId: user.userId
+      }
+    });
 
     return NextResponse.json({
       message: 'Tokens sent successfully',
-      transaction: {
-        hash: receipt.hash,
-        from: adminWallet.address,
-        to: toAddress,
-        amount: amount,
-        blockNumber: receipt.blockNumber,
-        explorerUrl: `https://sepolia.etherscan.io/tx/${receipt.hash}`
-      }
-    }, { status: 200 });
+      txHash: receipt.hash,
+      explorerUrl: `https://sepolia.etherscan.io/tx/${receipt.hash}`
+    });
 
   } catch (error) {
-    console.error('Token transfer error:', error);
+    console.error('Admin send error:', error);
     
-    // Handle specific errors
-    if (error.code === 'INSUFFICIENT_FUNDS') {
-      return NextResponse.json(
-        { error: 'Insufficient ETH for gas fees' },
-        { status: 400 }
-      );
+    // Try to log failed transaction
+    try {
+      const { toAddress, amount } = await request.json();
+      const user = getUserFromRequest(request);
+      const provider = new ethers.JsonRpcProvider(process.env.SEPOLIA_RPC_URL);
+      const adminWallet = new ethers.Wallet(process.env.ADMIN_PRIVATE_KEY, provider);
+      
+      await prisma.transaction.create({
+        data: {
+          from: adminWallet.address,
+          to: toAddress || 'unknown',
+          amount: amount?.toString() || '0',
+          txHash: 'failed-' + Date.now(),
+          status: 'failed',
+          type: 'admin',
+          userId: user.userId
+        }
+      });
+    } catch (logError) {
+      console.error('Failed to log error transaction:', logError);
     }
 
     return NextResponse.json(
-      { error: error.message || 'Failed to send tokens' },
+      { error: 'Failed to send tokens: ' + error.message },
       { status: 500 }
     );
   }

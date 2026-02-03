@@ -8,11 +8,14 @@ datasource db {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  password  String
-  createdAt DateTime @default(now())
-  wallets   Wallet[]
+  id              Int           @id @default(autoincrement())
+  email           String        @unique
+  password        String
+  connectedWallet String?       @unique
+  walletLinkedAt  DateTime?
+  createdAt       DateTime      @default(now())
+  wallets         Wallet[]
+  transactions    Transaction[]
 }
 
 model Wallet {
@@ -20,6 +23,19 @@ model Wallet {
   address    String   @unique
   privateKey String
   userId     Int
-  user       User     @relation(fields: [userId], references: [id])
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt  DateTime @default(now())
+}
+
+model Transaction {
+  id        Int      @id @default(autoincrement())
+  from      String
+  to        String
+  amount    String
+  txHash    String   @unique
+  status    String
+  type      String   @default("user")
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
 }
