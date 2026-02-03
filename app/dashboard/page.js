@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAccount, useConnect, useDisconnect } from 'wagmi';
+import { useAccount, useConnect, useDisconnect, useChainId, useSwitchChain } from 'wagmi';
+import { sepolia } from 'wagmi/chains';
 import { ethers } from 'ethers';
 import { TOKEN_ABI } from '@/lib/tokenABI';
 
@@ -14,6 +15,8 @@ export default function Dashboard() {
   const { address, isConnected } = useAccount();
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
+  const chainId = useChainId();
+  const { switchChain } = useSwitchChain();
 
   const [user, setUser] = useState(null);
   const [wallets, setWallets] = useState([]);
@@ -166,6 +169,23 @@ export default function Dashboard() {
     if (!userToAddress || !userAmount) {
       alert('Please fill in all fields');
       return;
+    }
+
+    // Check if user is on Sepolia network, if not, switch to it
+    if (chainId !== sepolia.id) {
+      try {
+        alert('Switching to Sepolia testnet... Please approve the network switch in MetaMask.');
+        await switchChain({ chainId: sepolia.id });
+        // Wait a moment for the network switch to complete
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (switchError) {
+        if (switchError.message?.includes('rejected') || switchError.message?.includes('User rejected')) {
+          alert('Network switch cancelled. Please switch to Sepolia testnet manually in MetaMask to continue.');
+        } else {
+          alert('Failed to switch network. Please switch to Sepolia testnet manually in MetaMask.');
+        }
+        return;
+      }
     }
 
     // Validate contract address is set
@@ -348,27 +368,65 @@ export default function Dashboard() {
               </div>
             </div>
           ) : (
-            <div className="bg-green-50 rounded-lg p-6">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <p className="text-green-700 font-semibold mb-2 flex items-center">
-                    <span className="bg-green-500 w-2 h-2 rounded-full mr-2 animate-pulse"></span>
-                    Connected
-                  </p>
-                  <p className="font-mono text-sm text-gray-700 bg-white px-3 py-2 rounded border border-green-200 break-all">
-                    {address}
-                  </p>
-                  {user?.connectedWallet && (
-                    <p className="text-xs text-green-600 mt-2">✓ Linked to your account</p>
-                  )}
+            <div className="space-y-4">
+              <div className="bg-green-50 rounded-lg p-6">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <p className="text-green-700 font-semibold mb-2 flex items-center">
+                      <span className="bg-green-500 w-2 h-2 rounded-full mr-2 animate-pulse"></span>
+                      Connected
+                    </p>
+                    <p className="font-mono text-sm text-gray-700 bg-white px-3 py-2 rounded border border-green-200 break-all">
+                      {address}
+                    </p>
+                    {user?.connectedWallet && (
+                      <p className="text-xs text-green-600 mt-2">✓ Linked to your account</p>
+                    )}
+                  </div>
+                  <button 
+                    onClick={() => disconnect()}
+                    className="ml-4 px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium rounded-lg transition-all"
+                  >
+                    Disconnect
+                  </button>
                 </div>
-                <button 
-                  onClick={() => disconnect()}
-                  className="ml-4 px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium rounded-lg transition-all"
-                >
-                  Disconnect
-                </button>
               </div>
+              
+              {/* Network Status */}
+              {chainId !== sepolia.id ? (
+                <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <p className="text-amber-800 font-semibold mb-1 flex items-center">
+                        <span className="bg-amber-500 w-2 h-2 rounded-full mr-2"></span>
+                        Wrong Network
+                      </p>
+                      <p className="text-sm text-amber-700">
+                        You're on {chainId === 1 ? 'Ethereum Mainnet' : `Chain ID ${chainId}`}. Please switch to Sepolia testnet.
+                      </p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await switchChain({ chainId: sepolia.id });
+                        } catch (error) {
+                          alert('Failed to switch network. Please switch manually in MetaMask.');
+                        }
+                      }}
+                      className="ml-4 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-lg transition-all"
+                    >
+                      Switch to Sepolia
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <p className="text-blue-700 text-sm flex items-center">
+                    <span className="bg-blue-500 w-2 h-2 rounded-full mr-2"></span>
+                    ✓ Connected to Sepolia Testnet
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>
