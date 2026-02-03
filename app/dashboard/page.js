@@ -4,11 +4,10 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAccount, useConnect, useDisconnect } from 'wagmi';
 import { ethers } from 'ethers';
+import { TOKEN_ABI } from '@/lib/tokenABI';
 
-const tokenABI = [
-  "function transfer(address to, uint256 amount) returns (bool)",
-  "function balanceOf(address account) view returns (uint256)"
-];
+// Use the full token ABI for proper token transfers
+const tokenABI = TOKEN_ABI;
 
 export default function Dashboard() {
   const router = useRouter();
@@ -169,22 +168,42 @@ export default function Dashboard() {
       return;
     }
 
+    // Validate contract address is set
+    const contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      alert('Error: Token contract address is not configured. Please set NEXT_PUBLIC_CONTRACT_ADDRESS in your environment variables.');
+      return;
+    }
+
+    // Validate address format
+    if (!ethers.isAddress(userToAddress)) {
+      alert('Invalid recipient address format');
+      return;
+    }
+
     setUserSending(true);
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
+      
+      // Create token contract instance - this will send tokens, NOT ETH
       const tokenContract = new ethers.Contract(
-        process.env.NEXT_PUBLIC_CONTRACT_ADDRESS,
+        contractAddress,
         tokenABI,
         signer
       );
 
+      // Convert amount to wei (18 decimals for ERC-20 tokens)
       const amountInWei = ethers.parseUnits(userAmount.toString(), 18);
+      
+      // Call the token's transfer function - this sends tokens, not ETH
+      // The transaction value will be 0 ETH (only gas fees are paid in ETH)
       const tx = await tokenContract.transfer(userToAddress, amountInWei);
       
-      alert('Waiting for confirmation...');
+      alert('Transaction submitted! Waiting for confirmation...');
       const receipt = await tx.wait();
 
+      // Log transaction to database
       await fetch('/api/token/send-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -195,13 +214,20 @@ export default function Dashboard() {
         })
       });
 
-      alert('Success! Tx: ' + receipt.hash);
+      alert('Success! Tokens sent. Transaction: ' + receipt.hash);
       setUserToAddress('');
       setUserAmount('');
       fetchUserTransactions();
 
     } catch (error) {
-      alert('Failed: ' + error.message);
+      console.error('Send token error:', error);
+      if (error.message.includes('insufficient funds')) {
+        alert('Insufficient funds: You need ETH to pay for gas fees (network fees). The token transfer itself is separate.');
+      } else if (error.message.includes('user rejected')) {
+        alert('Transaction cancelled by user');
+      } else {
+        alert('Failed to send tokens: ' + error.message);
+      }
     } finally {
       setUserSending(false);
     }
