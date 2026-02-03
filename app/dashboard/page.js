@@ -171,23 +171,6 @@ export default function Dashboard() {
       return;
     }
 
-    // Check if user is on Sepolia network, if not, switch to it
-    if (chainId !== sepolia.id) {
-      try {
-        alert('Switching to Sepolia testnet... Please approve the network switch in MetaMask.');
-        await switchChain({ chainId: sepolia.id });
-        // Wait a moment for the network switch to complete
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (switchError) {
-        if (switchError.message?.includes('rejected') || switchError.message?.includes('User rejected')) {
-          alert('Network switch cancelled. Please switch to Sepolia testnet manually in MetaMask to continue.');
-        } else {
-          alert('Failed to switch network. Please switch to Sepolia testnet manually in MetaMask.');
-        }
-        return;
-      }
-    }
-
     // Validate contract address is set
     const contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS;
     if (!contractAddress) {
@@ -204,8 +187,61 @@ export default function Dashboard() {
     setUserSending(true);
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
+      
+      // Check network from provider directly (more reliable)
+      const network = await provider.getNetwork();
+      const currentChainId = Number(network.chainId);
+      
+      // If not on Sepolia, switch network
+      if (currentChainId !== sepolia.id) {
+        try {
+          alert('⚠️ You are on the wrong network! Switching to Sepolia testnet...\n\nPlease approve the network switch in MetaMask.');
+          await switchChain({ chainId: sepolia.id });
+          
+          // Wait for network switch and verify
+          let attempts = 0;
+          let switched = false;
+          while (attempts < 10 && !switched) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            const newNetwork = await provider.getNetwork();
+            if (Number(newNetwork.chainId) === sepolia.id) {
+              switched = true;
+            }
+            attempts++;
+          }
+          
+          if (!switched) {
+            alert('❌ Network switch failed or was cancelled. Please switch to Sepolia testnet manually in MetaMask and try again.');
+            setUserSending(false);
+            return;
+          }
+          
+          alert('✅ Switched to Sepolia testnet! Proceeding with token transfer...');
+        } catch (switchError) {
+          console.error('Network switch error:', switchError);
+          alert('❌ Failed to switch network. Please switch to Sepolia testnet manually in MetaMask and try again.');
+          setUserSending(false);
+          return;
+        }
+      }
+
       const signer = await provider.getSigner();
       
+      // Verify we're on Sepolia one more time
+      const finalNetwork = await provider.getNetwork();
+      if (Number(finalNetwork.chainId) !== sepolia.id) {
+        alert('❌ Still not on Sepolia network. Please switch to Sepolia testnet in MetaMask.');
+        setUserSending(false);
+        return;
+      }
+      
+      // Verify contract address is valid
+      if (!ethers.isAddress(contractAddress)) {
+        alert('❌ Invalid contract address configured. Please check NEXT_PUBLIC_CONTRACT_ADDRESS.');
+        setUserSending(false);
+        return;
+      }
+
       // Create token contract instance - this will send tokens, NOT ETH
       const tokenContract = new ethers.Contract(
         contractAddress,
@@ -213,8 +249,25 @@ export default function Dashboard() {
         signer
       );
 
+      // Try to verify the contract exists by checking the symbol (optional, but helps verify)
+      try {
+        const tokenSymbol = await tokenContract.symbol();
+        console.log('Token symbol:', tokenSymbol);
+      } catch (contractError) {
+        console.warn('Could not read token symbol, but continuing...', contractError);
+      }
+
       // Convert amount to wei (18 decimals for ERC-20 tokens)
       const amountInWei = ethers.parseUnits(userAmount.toString(), 18);
+      
+      console.log('Sending token transfer:', {
+        contractAddress,
+        to: userToAddress,
+        amount: userAmount,
+        amountInWei: amountInWei.toString(),
+        network: finalNetwork.name,
+        chainId: finalNetwork.chainId.toString()
+      });
       
       // Call the token's transfer function - this sends tokens, not ETH
       // The transaction value will be 0 ETH (only gas fees are paid in ETH)
@@ -241,12 +294,17 @@ export default function Dashboard() {
 
     } catch (error) {
       console.error('Send token error:', error);
-      if (error.message.includes('insufficient funds')) {
-        alert('Insufficient funds: You need ETH to pay for gas fees (network fees). The token transfer itself is separate.');
-      } else if (error.message.includes('user rejected')) {
+      console.error('Contract address used:', contractAddress);
+      console.error('Network chainId:', chainId);
+      
+      if (error.message?.includes('insufficient funds') || error.message?.includes('insufficient balance')) {
+        alert('Insufficient funds: You need Sepolia ETH (testnet ETH) to pay for gas fees. Get some from a Sepolia faucet.');
+      } else if (error.message?.includes('user rejected') || error.message?.includes('User rejected')) {
         alert('Transaction cancelled by user');
+      } else if (error.message?.includes('network') || error.message?.includes('chain')) {
+        alert('Network error: Please make sure you are on Sepolia testnet in MetaMask.');
       } else {
-        alert('Failed to send tokens: ' + error.message);
+        alert('Failed to send tokens: ' + (error.message || error.toString()));
       }
     } finally {
       setUserSending(false);
