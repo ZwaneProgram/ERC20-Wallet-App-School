@@ -364,7 +364,6 @@ export default function Dashboard() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="flex items-center space-x-4">
               <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white w-10 h-10 rounded-lg flex items-center justify-center font-bold text-xl flex-shrink-0">
-                G
               </div>
               <div className="min-w-0">
                 <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
@@ -1165,7 +1164,7 @@ export default function Dashboard() {
                   setShowDeleteModal(false);
                   setDeleteKey("");
                 }}
-                className="flex-1 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg"
+                className="flex-1 px-4 py-2 bg-gray-900 hover:bg-gray-600 rounded-lg"
               >
                 Cancel
               </button>
