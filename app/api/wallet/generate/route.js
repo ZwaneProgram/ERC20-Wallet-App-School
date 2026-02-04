@@ -5,27 +5,17 @@ import { getUserFromRequest } from '@/lib/auth';
 
 export async function POST(request) {
   try {
-    // Check if user is authenticated
     const user = getUserFromRequest(request);
     if (!user) {
-      return NextResponse.json(
-        { error: 'Not authenticated' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    // Generate new wallet
     const wallet = ethers.Wallet.createRandom();
 
-    // Encrypt private key (simple encryption for school project)
-    // In production, use proper encryption like AES
-    const encryptedPrivateKey = Buffer.from(wallet.privateKey).toString('base64');
-
-    // Save wallet to database
     const savedWallet = await prisma.wallet.create({
       data: {
         address: wallet.address,
-        privateKey: encryptedPrivateKey,
+        privateKey: wallet.privateKey, // ✅ STORE RAW KEY
         userId: user.userId
       }
     });
@@ -41,9 +31,6 @@ export async function POST(request) {
 
   } catch (error) {
     console.error('Wallet generation error:', error);
-    return NextResponse.json(
-      { error: 'Failed to generate wallet' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to generate wallet' }, { status: 500 });
   }
 }
